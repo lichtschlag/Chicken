@@ -13,6 +13,7 @@ def time
   puts "Execution time: #{Time.now - start} seconds"
 end
 
+
 # ===============================================================================================================
 # Global array of states that are already computed
 # ===============================================================================================================
@@ -20,11 +21,13 @@ end
 $savedStates = {}
 $calcsPerformed = 0
 
+
 # ===============================================================================================================
-# Gamestate Class
+# GameState Class
 # ===============================================================================================================
 
 class GameState
+  
   attr_accessor :rolledLasers
   attr_accessor :rolledHumans
   attr_accessor :rolledCows
@@ -37,23 +40,28 @@ class GameState
   attr_accessor :savedTanks
   attr_accessor :savedChickens
   
-  attr_accessor :bestMove
+  attr_accessor :diceToRoll
+  
+  attr_accessor :bestMoves
   attr_accessor :expectedScore
   
   attr_accessor :savedHash
     
-  # Class Architecture
+  # Class Architecture -----------------------------------------------------------------------------------------
   
   # saving the hash reduces execution time to 75%
   def reHash
-    h = @savedLasers.hash ^ (@savedTanks<<4).hash ^ (@savedHumans<<8).hash ^ (@savedCows<<12).hash ^ (@savedChickens<<16).hash
-    @savedHash =  h ^ (@rolledLasers<<20).hash ^ (@rolledHumans<<24).hash ^ (@rolledCows<<28).hash ^ (@rolledChickens<<32).hash 
+    @savedHash = @savedLasers.hash ^ (@savedTanks<<4).hash ^ (@savedHumans<<8).hash ^ (@savedCows<<12).hash \
+                  ^ (@savedChickens<<16).hash ^ (@rolledLasers<<20).hash ^ (@rolledHumans<<24).hash \
+                  ^ (@rolledCows<<28).hash ^ (@rolledChickens<<32).hash ^ (@diceToRoll<<36).hash 
   end
+
   
   def hash
     return @savedHash
   end
   
+
   def == (other)
     self.class === other and
       other.savedLasers == @savedLasers and
@@ -64,31 +72,37 @@ class GameState
       other.rolledLasers == @rolledLasers and
       other.rolledHumans == @rolledHumans and
       other.rolledCows == @rolledCows and
-      other.rolledChickens == @rolledChickens
+      other.rolledChickens == @rolledChickens and
+      other.diceToRoll == @diceToRoll
   end
+
 
   alias eql? ==
   
     
-  # Create the object
-  def initialize(lasers, tanks, humans, cows, chickens)
-    @rolledLasers = lasers
-    @rolledHumans = humans
-    @rolledCows = cows
-    @rolledChickens = chickens
+  # Constructor
+  def initialize(diceToRoll)
+    @rolledLasers = 0
+    @rolledHumans = 0
+    @rolledCows = 0
+    @rolledChickens = 0
     
     @savedLasers = 0
     @savedHumans = 0
     @savedCows = 0
     @savedChickens = 0
-    @savedTanks = tanks
+    @savedTanks = 0
+    
+    @diceToRoll = diceToRoll
     
     @savedHash = nil
     self.reHash
-    
   end
-
-  # One cannot select something that has already been saved
+  
+  
+  # Game Logic ----------------------------------------------------------------------------------------------
+  
+  # One cannot select something that has already been saved, except lasers, which can alwyas be picked
   def possibleMoves
     result = []
     if @rolledLasers != 0
@@ -103,16 +117,21 @@ class GameState
     if @rolledChickens != 0 && @savedChickens == 0
       result.push(:saveChickensMove)
     end
+    if @diceToRoll != 0
+      # instead of rolling the player can end the game and keep the achieved score
+      result.push(:rollDiceMove)
+      result.push(:endGameMove)
+    end
     return result
   end
 
 
-  # See if moves can be made
+  # An end state is reached, if the player can make no moves, including rolling
   def isEndState?
     return self.possibleMoves == []
   end
+  
 
-  # Say bye to everybody
   def score
     bonus = 0
     if @savedHumans != 0 && @savedCows != 0 && @savedChickens != 0 
@@ -123,6 +142,79 @@ class GameState
     end    
     return @savedHumans + @savedCows + @savedChickens + bonus
   end
+  
+
+  def statesAfterMove(move)
+    # assert self.possibleMoves.include?(move) , "Impossible move"
+    
+    if move == :rollDiceMove 
+      return self.allPossibleStatesAfterDiceRoll
+    
+    elsif
+      stateAfterPick = self.clone      
+      case move
+      when :saveLasersMove
+        stateAfterPick.savedLasers = @savedLasers + @rolledLasers
+        stateAfterPick.rolledLasers = 0
+      when :saveHumansMove
+        # assert stateAfterPick.savedHumans == 0
+        stateAfterPick.savedHumans = @rolledHumans
+        stateAfterPick.rolledHumans = 0
+      when :saveCowsMove
+        # assert stateAfterPick.savedCows == 0
+        stateAfterPick.savedCows = @rolledCows
+        stateAfterPick.rolledCows = 0
+      when :saveChickensMove
+        # assert stateAfterPick.savedChickens == 0
+        stateAfterPick.savedChickens = @rolledChickens
+        stateAfterPick.rolledChickens = 0
+      when :endGameMove
+        stateAfterPick.diceToRoll = 0
+      end
+  
+      stateAfterPick.diceToRoll = stateAfterPick.rolledLasers + stateAfterPick.rolledHumans \
+                                  + stateAfterPick.rolledCows + stateAfterPick.rolledChickens
+      stateAfterPick.rolledLasers = 0
+      stateAfterPick.rolledHumans = 0
+      stateAfterPick.rolledCows = 0
+      stateAfterPick.rolledChickens = 0
+  
+      stateAfterPick.reHash
+  
+      return [stateAfterPick]
+    end
+  end
+
+
+  def allPossibleStatesAfterDiceRoll
+    result = []
+    numberOfDice = @diceToRoll
+    for lasers in 0..numberOfDice
+      for tanks in 0..(numberOfDice-lasers)
+        for humans in 0..(numberOfDice-lasers-tanks)
+          for cows in 0..(numberOfDice-lasers-tanks-humans)
+            chickens = (numberOfDice-lasers-tanks-humans-cows)
+            
+            aFollowState = self.clone
+            aFollowState.rolledLasers = lasers
+            aFollowState.rolledHumans = humans
+            aFollowState.rolledCows = cows
+            aFollowState.rolledChickens = chickens
+            aFollowState.diceToRoll = 0
+            aFollowState.savedTanks = @savedTanks + tanks
+            
+            aFollowState.reHash
+            
+            result.push(aFollowState)
+          end      
+        end      
+      end
+    end
+   return result 
+  end
+  
+  
+  # Output -----------------------------------------------------------------------------------------------
   
   def description
     saved = ""
@@ -137,63 +229,20 @@ class GameState
     @rolledHumans.times {possible << "H"}
     @rolledCows.times {possible << "C"}
     @rolledChickens.times {possible << "c"}
-    
-    result = "Saved = #{saved}, available = #{possible}, possible moves = #{self.possibleMoves}, score = #{self.score}, #{self.isEndState?}"
-  end
-
-  def statesAfterMove(move)
-    # assert self.possibleMoves.include?(move) , "Impossible move"
-    stateAfterPick = self.clone
-    
-    case move
-    when :saveLasersMove
-      stateAfterPick.savedLasers = @savedLasers + @rolledLasers
-      stateAfterPick.rolledLasers = 0;
-    when :saveHumansMove
-      # assert stateAfterPick.savedHumans == 0
-      stateAfterPick.savedHumans = @rolledHumans
-      stateAfterPick.rolledHumans = 0;
-    when :saveCowsMove
-      # assert stateAfterPick.savedCows == 0
-      stateAfterPick.savedCows = @rolledCows
-      stateAfterPick.rolledCows = 0;
-    when :saveChickensMove
-      # assert stateAfterPick.savedChickens == 0
-      stateAfterPick.savedChickens = @rolledChickens
-      stateAfterPick.rolledChickens = 0;
+  
+    if @diceToRoll == 0
+      result = "Saved = #{saved}, available = #{possible}, possible moves = #{self.possibleMoves}, score = #{self.score}"
     else
-      # assert false
+      result = "Saved = #{saved}, available  #{diceToRoll} dice, possible moves = #{self.possibleMoves}, score = #{self.score}"
     end
-    stateAfterPick.reHash
     
-    return stateAfterPick.allPossibleFollowStates
-  end
-
-  def allPossibleFollowStates
-    result = []
-    numberOfDice = @rolledLasers + @rolledHumans + @rolledCows + @rolledChickens
-    for lasers in 0..numberOfDice
-      for tanks in 0..(numberOfDice-lasers)
-        for humans in 0..(numberOfDice-lasers-tanks)
-          for cows in 0..(numberOfDice-lasers-tanks-humans)
-            chickens = (numberOfDice-lasers-tanks-humans-cows)
-            
-            aFollowState = self.clone
-            aFollowState.rolledLasers = lasers
-            aFollowState.rolledHumans = humans
-            aFollowState.rolledCows = cows
-            aFollowState.rolledChickens = chickens
-            aFollowState.savedTanks = tanks + @savedTanks
-            
-            aFollowState.reHash
-            
-            result.push(aFollowState)
-          end      
-        end      
-      end
+    expectedScore = $savedStates[self]
+    if expectedScore
+      result << ", \t\texpectation = %2.2f" % expectedScore
     end
-   return result 
+    
   end
+  
   
   def recursiveDescription
     result = self.description
@@ -201,12 +250,12 @@ class GameState
     self.possibleMoves.each do |move|
       nextStates = self.statesAfterMove(move)
       nextStates.each do |state|
-         appendix = state.recursiveDescription
+        appendix = state.recursiveDescription
         shiftedAppendix = ""
         
         # This takes up about half of the computation time
         appendix.each_line do |line|
-          shiftedAppendix << "..#{line}"
+          shiftedAppendix << ". #{line}"
         end
         result << "\n#{shiftedAppendix}"
       end
@@ -215,6 +264,8 @@ class GameState
     return result
   end
 
+
+  # Recursion ---------------------------------------------------------------------------------------------
   
   def calculateWinningStrategy
 
@@ -231,36 +282,44 @@ class GameState
       return
     end
     
-    $calcsPerformed =     $calcsPerformed +1
-    
-    # else test all moves
-    bestMove = nil
+    # ok, we actually need to perform a recursive step here
+    $calcsPerformed =  $calcsPerformed +1
+    bestMoves = []
     bestScore = 0
+    
+    # for each move ...
     self.possibleMoves.each do |move|
       
-      # for each move get the best distribution
+      # ... calculate the expected score outcome ...
+      expectedScoreForMove = 0;
+      
       nextStates = self.statesAfterMove(move)
-      sumScore = 0
-      count = 0
+      
+      # ... and for now, calculate the average as the outcome
+      sumScore  = 0
+      count     = 0
       nextStates.each do |state|
         state.calculateWinningStrategy
-        sumScore = sumScore + $savedStates[state]
-        count = count + 1
-      end
+        sumScore  = sumScore + $savedStates[state]
+        count     = count + 1
+      end        
+      expectedScoreForMove = sumScore.to_f / count
       
-      expectedScoreForMove = sumScore / count
+      # ... and remember the moves with the best outcome
       if  expectedScoreForMove > bestScore
         bestScore = expectedScoreForMove
-        bestmove = move
+        bestMoves = [move]
+      elsif expectedScoreForMove == bestScore
+        bestMoves.push(move)
       end
       
     end
 
+    # push result to our results array
     @expectedScore = bestScore
-    @bestMove = bestMove
+    @bestMoves = bestMoves
     $savedStates[self] = @expectedScore
 
-    
   end
 
 end
@@ -270,25 +329,7 @@ end
 # Script
 # ===============================================================================================================
 
-def allStartingPositions
-  numberOfDice = ARGV[0].to_i
-  if numberOfDice == nil 
-    numberOfDice = 2
-  end
-  
-  baseState = GameState.new(0,0,0,0,numberOfDice)
-  possibleFirstStates = baseState.allPossibleFollowStates
-  
-  possibleFirstStates.each do |state|
-    puts state.recursiveDescription
-    
-  end
-  
-  puts "A total of #{possibleFirstStates.count} first positions are possible with #{numberOfDice} dice."
-end
-
-
-def evaluateHashPairs
+def evaluateHashingFunction
   arrayOfAllKeysAndValues = $savedStates.to_a
   arrayOfAllStates = []
   arrayOfAllKeysAndValues.each do |entry|
@@ -306,8 +347,11 @@ def evaluateHashPairs
         collisionCount = collisionCount +1
       end
     end
+    if i % 1000 == 0
+      puts "%2.2f%% done" % (i.to_f/max *100)
+    end
   end
-  puts "A total of #{collisionCount} collisions."
+  puts "A total of #{collisionCount} hash collisions."
   
 end
 
@@ -318,22 +362,63 @@ def calculateWinningStrategy
     numberOfDice = 2
   end
   
-  baseState = GameState.new(0,0,0,0,numberOfDice)
-  possibleFirstStates = baseState.allPossibleFollowStates
+  baseState = GameState.new(numberOfDice)
+  baseState.calculateWinningStrategy
+  possibleFirstStates = baseState.statesAfterMove(:rollDiceMove)
   
-  possibleFirstStates.each do |state|
-    state.calculateWinningStrategy
-  end
+  # puts baseState.recursiveDescription
   
-  puts "A total of #{possibleFirstStates.count} first positions are possible with #{numberOfDice} dice."
+  puts "A total of #{possibleFirstStates.count} dice rolls are possible in the first move with #{numberOfDice} dice."
   puts "A total of #{$savedStates.count} game states in total are possible with #{numberOfDice} dice."
-  puts "A total of #{$calcsPerformed} recursiveSteps taken with #{numberOfDice} dice."
+  puts "A total of #{$calcsPerformed} recursive steps taken with #{numberOfDice} dice."
 end
 
+
+def outputGameTree
+  numberOfDice = ARGV[0].to_i
+  if numberOfDice == nil 
+    numberOfDice = 2
+  end
+  
+  baseState = GameState.new(numberOfDice)
+  puts baseState.recursiveDescription
+end
+
+
+def outputStatistics
+  results = {:firstStates => [], :savedStates => [], :expectedScore  => [], :timeToCalc  => [] }
+  
+  puts "Dice\t\tFirst States\tTotal States\tExpected Score\tComputation Time"
+  
+  for i in 1..13 do
+    
+    $savedStates = {}
+    
+    baseState = GameState.new(i)
+    start = Time.now
+    baseState.calculateWinningStrategy
+    executionTime = Time.now - start
+
+    
+    results[:firstStates][i]    = baseState.statesAfterMove(:rollDiceMove).count
+    results[:savedStates][i]    = $savedStates.count
+    results[:expectedScore][i]  = $savedStates[baseState]
+    results[:timeToCalc][i]     = executionTime
+    
+    puts "%10d\t%12d\t%12d\t%14.2f\t\t%8.2f"\
+          % [ i, results[:firstStates][i], results[:savedStates][i], results[:expectedScore][i], results[:timeToCalc][i] ]
+    
+  end
+end
+
+
+# ---- Main Script ----------------------------------------------------------------------------------------------
+
 time do
-  # allStartingPositions
   calculateWinningStrategy
-  # evaluateHashPairs
+  # outputGameTree
+  # evaluateHashingFunction
+  outputStatistics
 end
 
 
