@@ -25,6 +25,10 @@ It suggests the move with the highest expected score outcome. Here are some exam
 		>> ruby chicken.rb CCCCC LLLLHHHH
 		You should [:saveHumansMove] for an expected score of 9.23
 
+*	For all other sticky situations, call 'ruby chicken.rb (state of the saved dice) (state of the rolled dice)'. 	Both parameters can be expressed with the letters T,L,H,C,c for Tanks, Lasers, Humans, Cows, Chickens respectively.
+	Pass a number for the second parameter to select the amount of dice to roll, as in the examples above.
+	 
+
 #How the game changes with more dice 
 
 ![Expected Game Score by Number of Dice](graph.png "Expected Game Score by Number of Dice")
