@@ -1,16 +1,66 @@
 # ===============================================================================================================
 # Martian Dice Solver
-# Rules: 13 dice, 6 sices
+# Rules: http://boardgamegeek.com/boardgame/99875/martian-dice,  http://playtmg.com/products/martian-dice
 # ===============================================================================================================
 
 # ===============================================================================================================
 # Helpers
 # ===============================================================================================================
 
+class AssertionError < RuntimeError
+end
+
+def assert
+  raise AssertionError unless yield
+end
+
 def time
   start = Time.now
   yield
-  puts "Execution time: #{Time.now - start} seconds"
+  executionTime = Time.now - start
+  return executionTime
+end
+
+
+class String
+  def is_integer?
+    self.to_i.to_s == self
+  end
+end
+
+
+# ===============================================================================================================
+# Probability Functions
+# ===============================================================================================================
+
+class Fixnum
+  @@factorialLookUp = []
+  
+  def self.computeFactorials
+    for f in 0..20 do
+      result = 1
+      for i in 1..f do
+        result = result * i
+      end
+      @@factorialLookUp[f] = result
+    end
+  end
+  
+  def factorial
+    result = @@factorialLookUp[self]
+  end
+end
+
+
+def permutationsOfDiceResult(m1, m2, m3, m4, m5)
+  # Standard formula for a k-Combination with repretitions is n!/(m1! * m2! ... )
+  n = m1 + m2 + m3 + m4 + m5
+  # Here, m1 (the Lasers) apppears on 2 dice sides, so add 2^m1 term for all the permutations of the laser
+  # e.g. L is double as likely as H, since L is on two of the six dice sides
+  # but LLLH is 4 times as likely as LHHH
+  return n.factorial.to_f / 
+        ( m1.factorial * m2.factorial * m3.factorial * m4.factorial * m5.factorial) *
+        2 ** m1
 end
 
 
@@ -18,7 +68,8 @@ end
 # Global array of states that are already computed
 # ===============================================================================================================
 
-$savedStates = {}
+$expectedScores = {}
+$bestMoves = {}
 $calcsPerformed = 0
 
 
@@ -32,7 +83,7 @@ class GameState
   attr_accessor :rolledHumans
   attr_accessor :rolledCows
   attr_accessor :rolledChickens
-  #tanks must always be saved
+  # tanks must always be saved
 
   attr_accessor :savedHumans
   attr_accessor :savedCows
@@ -42,10 +93,12 @@ class GameState
   
   attr_accessor :diceToRoll
   
-  attr_accessor :bestMoves
-  attr_accessor :expectedScore
+  # attr_accessor :bestMoves
+  # attr_accessor :expectedScore
   
   attr_accessor :savedHash
+  attr_accessor :rolledTanks     # only used to calc probability
+  
     
   # Class Architecture -----------------------------------------------------------------------------------------
   
@@ -94,6 +147,8 @@ class GameState
     @savedTanks = 0
     
     @diceToRoll = diceToRoll
+    
+    @rolledTanks = 0
     
     @savedHash = nil
     self.reHash
@@ -203,6 +258,9 @@ class GameState
             aFollowState.diceToRoll = 0
             aFollowState.savedTanks = @savedTanks + tanks
             
+            # store tanks rolled, so that the state knows its probability
+            aFollowState.rolledTanks = tanks
+            
             aFollowState.reHash
             
             result.push(aFollowState)
@@ -211,6 +269,10 @@ class GameState
       end
     end
    return result 
+  end
+  
+  def probability
+    permutationsOfDiceResult(@rolledLasers, @rolledTanks, @rolledHumans, @rolledCows, @rolledChickens)
   end
   
   
@@ -231,31 +293,52 @@ class GameState
     @rolledChickens.times {possible << "c"}
   
     if @diceToRoll == 0
-      result = "Saved = #{saved}, available = #{possible}, possible moves = #{self.possibleMoves}, score = #{self.score}"
+      result = "╰─Saved = #{saved}, available = #{possible}, score = #{self.score}"
     else
-      result = "Saved = #{saved}, available  #{diceToRoll} dice, possible moves = #{self.possibleMoves}, score = #{self.score}"
+      result = "╰─Saved = #{saved}, available #{diceToRoll} dice, score = #{self.score}"
     end
     
-    expectedScore = $savedStates[self]
+    expectedScore = $expectedScores[self]
     if expectedScore
-      result << ", \t\texpectation = %2.2f" % expectedScore
+      result << ", expectation = %2.2f" % expectedScore
+    end
+    if @rolledTanks
+      result << ", p = %2.2f" % self.probability
     end
     
+    result << ", possible moves = #{self.possibleMoves}"
+    bestMove = $bestMoves[self]
+    if bestMove
+      result << ", suggestion = #{bestMove}"
+    end
+    
+    return result  
   end
   
   
-  def recursiveDescription
+  def recursiveDescription(lastLine = false, depth = 5)
     result = self.description
     
-    self.possibleMoves.each do |move|
+    if !(depth >0) then 
+      return result
+    end
+    possibleMoves = self.possibleMoves
+    possibleMoves.each do |move|
       nextStates = self.statesAfterMove(move)
       nextStates.each do |state|
-        appendix = state.recursiveDescription
+        stateIsLastLine = (state == nextStates.last && move == possibleMoves.last)
+        appendix = state.recursiveDescription(stateIsLastLine, depth-1)
         shiftedAppendix = ""
         
-        # This takes up about half of the computation time
-        appendix.each_line do |line|
-          shiftedAppendix << ". #{line}"
+        # This is very expensive to do
+        if (lastLine)
+          appendix.each_line do |line|
+            shiftedAppendix << "  #{line}"
+          end
+        elsif
+          appendix.each_line do |line|
+            shiftedAppendix << "│ #{line}"
+          end
         end
         result << "\n#{shiftedAppendix}"
       end
@@ -270,15 +353,14 @@ class GameState
   def calculateWinningStrategy
 
     # if state already computed and saved in the global variable, leave
-    if $savedStates[self] != nil
+    if $expectedScores[self] != nil
       return
     end
 
     # if end state, then store and leave
     if self.isEndState?
-      @expectedScore = self.score
-      @bestMove = nil
-      $savedStates[self] = @expectedScore
+      $expectedScores[self] = self.score
+      $bestMoves[self] = nil
       return
     end
     
@@ -295,18 +377,19 @@ class GameState
       
       nextStates = self.statesAfterMove(move)
       
-      # ... and for now, calculate the average as the outcome
+      # ... by calculating the average as the outcomes ...
       sumScore  = 0
       count     = 0
       nextStates.each do |state|
         state.calculateWinningStrategy
-        sumScore  = sumScore + $savedStates[state]
-        count     = count + 1
+        # ... multiplied by its probability
+        sumScore  = sumScore + $expectedScores[state] * state.probability
+        count     = count + state.probability
       end        
       expectedScoreForMove = sumScore.to_f / count
       
       # ... and remember the moves with the best outcome
-      if  expectedScoreForMove > bestScore
+      if expectedScoreForMove > bestScore
         bestScore = expectedScoreForMove
         bestMoves = [move]
       elsif expectedScoreForMove == bestScore
@@ -316,9 +399,10 @@ class GameState
     end
 
     # push result to our results array
-    @expectedScore = bestScore
-    @bestMoves = bestMoves
-    $savedStates[self] = @expectedScore
+    # @expectedScore = bestScore
+    # @bestMoves = bestMoves
+    $expectedScores[self] = bestScore
+    $bestMoves[self] = bestMoves
 
   end
 
@@ -330,7 +414,7 @@ end
 # ===============================================================================================================
 
 def evaluateHashingFunction
-  arrayOfAllKeysAndValues = $savedStates.to_a
+  arrayOfAllKeysAndValues = $expectedScores.to_a
   arrayOfAllStates = []
   arrayOfAllKeysAndValues.each do |entry|
     arrayOfAllStates.push(entry[0])
@@ -352,11 +436,13 @@ def evaluateHashingFunction
     end
   end
   puts "A total of #{collisionCount} hash collisions."
-  
 end
 
 
 def calculateWinningStrategy
+  $expectedScores = {}
+  $bestMoves = {}
+  
   numberOfDice = ARGV[0].to_i
   if numberOfDice == nil 
     numberOfDice = 2
@@ -366,11 +452,10 @@ def calculateWinningStrategy
   baseState.calculateWinningStrategy
   possibleFirstStates = baseState.statesAfterMove(:rollDiceMove)
   
-  # puts baseState.recursiveDescription
-  
   puts "A total of #{possibleFirstStates.count} dice rolls are possible in the first move with #{numberOfDice} dice."
-  puts "A total of #{$savedStates.count} game states in total are possible with #{numberOfDice} dice."
+  puts "A total of #{$expectedScores.count} game states in total are possible with #{numberOfDice} dice."
   puts "A total of #{$calcsPerformed} recursive steps taken with #{numberOfDice} dice."
+  puts ""
 end
 
 
@@ -381,7 +466,9 @@ def outputGameTree
   end
   
   baseState = GameState.new(numberOfDice)
-  puts baseState.recursiveDescription
+  puts "Tree of game states"
+  puts baseState.recursiveDescription(true)
+  puts ""
 end
 
 
@@ -392,33 +479,108 @@ def outputStatistics
   
   for i in 1..13 do
     
-    $savedStates = {}
-    
+    $expectedScores = {}
+    $bestMoves = {}
     baseState = GameState.new(i)
-    start = Time.now
-    baseState.calculateWinningStrategy
-    executionTime = Time.now - start
-
+    executionTime = time do
+      baseState.calculateWinningStrategy
+    end
     
     results[:firstStates][i]    = baseState.statesAfterMove(:rollDiceMove).count
-    results[:savedStates][i]    = $savedStates.count
-    results[:expectedScore][i]  = $savedStates[baseState]
+    results[:savedStates][i]    = $expectedScores.count
+    results[:expectedScore][i]  = $expectedScores[baseState]
     results[:timeToCalc][i]     = executionTime
     
     puts "%10d\t%12d\t%12d\t%14.2f\t\t%8.2f"\
           % [ i, results[:firstStates][i], results[:savedStates][i], results[:expectedScore][i], results[:timeToCalc][i] ]
-    
   end
+  puts ""
+end
+
+
+def giveMoveSuggestion(saved, options)
+  if !saved || !options then
+     puts "Did not understand parameter #{stateDescription}, usage \"saved, options\", e.g. \"HHL 3\" or \"THC, HLLC\""
+     return
+  end
+  
+  state = GameState.new(0)
+  state.savedTanks = saved.count "tT"
+  state.savedLasers = saved.count "lL"
+  state.savedHumans = saved.count "hH"
+  state.savedCows = saved.count "C"
+  state.savedChickens = saved.count "c"
+
+  if options.is_integer? then
+    state.diceToRoll = options.to_i
+  else
+    state.rolledLasers = options.count "lL"
+    state.rolledHumans = options.count "hH"
+    state.rolledCows = options.count "C"
+    state.rolledChickens = options.count "c"
+  end
+  
+  state.calculateWinningStrategy
+  puts state.recursiveDescription(true, 1)
+  puts "\n"
+  puts "You should #{$bestMoves[state]} for an expected score of #{$expectedScores[state]}\n"
+end
+
+
+
+# ---- Test Cases -----------------------------------------------------------------------------------------------
+
+def testProbabilityFunctions
+  assert {0.factorial == 1}
+  assert {1.factorial == 1}
+  assert {3.factorial == 6}
+  assert {6.factorial == 720}
+  
+  assert { permutationsOfDiceResult(2,1,0,0,0) == 12}
+  assert { permutationsOfDiceResult(1,2,0,0,0) == 6}
+  assert { permutationsOfDiceResult(0,1,1,1,0) == 6}
+  assert { permutationsOfDiceResult(0,3,0,0,0) == 1}
+  assert { permutationsOfDiceResult(3,0,0,0,0) == 8}
+end
+
+
+def testGameStateClass
+  assert { 
+    testState = GameState.new(3)
+    testState.probability == 1 
+  }
+  assert {
+    testState = GameState.new(3)
+    testState.rolledLasers = 2
+    testState.rolledHumans = 1
+    testState.probability == 12
+  }
+  assert {
+    testState = GameState.new(3)
+    testState.rolledLasers = 1
+    testState.rolledHumans = 2
+    testState.probability == 6
+  }
+  
+end
+
+
+def testCases
+  testProbabilityFunctions
+  testGameStateClass
 end
 
 
 # ---- Main Script ----------------------------------------------------------------------------------------------
 
-time do
-  calculateWinningStrategy
+execTime = time do
+  Fixnum.computeFactorials
+  # calculateWinningStrategy
   # outputGameTree
   # evaluateHashingFunction
-  outputStatistics
+  # outputStatistics
+  # testCases
+  giveMoveSuggestion(ARGV[0], ARGV[1])
 end
 
-
+puts "Script execution time: #{execTime} seconds\n"
