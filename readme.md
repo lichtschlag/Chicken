@@ -1,7 +1,7 @@
 Chicken
 =====================
 
-Chicken is a solver for the game "[Martian Dice][md]" [1]
+Chicken is a solver for the game "[Martian Dice][md]"
 
 #What it does
 
