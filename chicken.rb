@@ -1,3 +1,5 @@
+#!/usr/bin/env ruby
+
 # ===============================================================================================================
 # Martian Dice Solver
 # Rules: http://boardgamegeek.com/boardgame/99875/martian-dice,  http://playtmg.com/products/martian-dice
@@ -500,7 +502,7 @@ end
 
 def giveMoveSuggestion(saved, options)
   if !saved || !options then
-     puts "Did not understand parameter #{stateDescription}, usage \"saved, options\", e.g. \"HHL 3\" or \"THC, HLLC\""
+     puts "Did not understand parameters \"#{saved} #{options}\", usage \"./chicken.rb saved options\", e.g. \"./chicken.rb HHL 3\" or \"./chicken.rb THC, HLLC\""
      return
   end
   
